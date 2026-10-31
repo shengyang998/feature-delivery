@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "description": "Portable defaults; null selects runtime configured default. Edit the installed user profile for local models.",
+  "runtimes": {
+    "codex": {"implementer": null, "reviewer": null, "computer_use": null},
+    "opencode": {"implementer": null, "reviewer": null, "computer_use": null},
+    "pi": {"implementer": null, "reviewer": null, "computer_use": null},
+    "claude": {"implementer": null, "reviewer": null, "computer_use": null}
+  }
+}
