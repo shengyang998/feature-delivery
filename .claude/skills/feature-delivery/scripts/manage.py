@@ -45,10 +45,16 @@ def read_json(path):
 
 
 def routing():
-    return (BEGIN + b"\nFor feature implementation (including tiny features), use the feature-delivery skill. "
-            b"Coordinator dispatches independent implementer and design-review peers; design agreement precedes coding. "
+    return (BEGIN + b"\nUse feature-delivery for substantial shared cross-component contracts/core behavior, "
+            b"meaningful default-output semantics, persisted/interchanged formats, production decoder/rendering math, release-sensitive behavior, "
+            b"or explicit invocation of feature-delivery/an independent pair. File count alone is not a trigger. Other bounded work, including ordinary "
+            b"internal tools/docs/diagnostics, stays with the main agent unless shared core or persistence semantics "
+            b"change; run relevant tests and one appropriate actual-path check. "
+            b"When paired, use independent implementer/design-review peers and agree design before code. "
+            b"Substantive affected-core changes need affected re-review; nonsemantic corrections get a bounded "
+            b"main-agent check without resetting unrelated approval. "
             b"Delegated implementer/reviewer: obey your assigned role, do not recursively launch this workflow. "
-            b"Pure discussion/research does not trigger it. Preserve existing instructions and authorization.\n" + END + b"\n")
+            b"Pure discussion/research alone does not trigger it. Preserve existing instructions and authorization.\n" + END + b"\n")
 
 
 def agent_content(role, profile):

@@ -78,10 +78,10 @@ class InstallerTests(unittest.TestCase):
     def test_managed_block_edit_refuses_entire_uninstall(self):
         self.cli("install")
         route = self.home / manage.RUNTIMES["pi"][1]
-        route.write_bytes(route.read_bytes().replace(b"tiny", b"small"))
+        route.write_bytes(route.read_bytes().replace(b"substantial", b"all"))
         self.cli("uninstall", ok=False)
         self.assertTrue((self.home / manage.RUNTIMES["codex"][0]).is_symlink())
-        self.assertIn(b"small", route.read_bytes())
+        self.assertIn(b"all shared", route.read_bytes())
 
     def test_foreign_link_and_symlink_parent_rejected(self):
         foreign = self.home / manage.RUNTIMES["codex"][0]
@@ -113,6 +113,101 @@ class InstallerTests(unittest.TestCase):
         self.cli("sync-models", ok=False)
         self.cli("uninstall", ok=False)
         self.assertTrue(agent.read_bytes().endswith(b"User edit\n"))
+
+    def test_prior_policy_refresh_uses_owned_uninstall_install_and_preserves_user_state(self):
+        from unittest.mock import patch
+        import contextlib
+        import io
+
+        # Represent the previously shipped managed block, not the new template.
+        prior_routing = (manage.BEGIN + b"\nFor feature implementation (including tiny features), use the feature-delivery skill. "
+                         b"Coordinator dispatches independent implementer and design-review peers; design agreement precedes coding. "
+                         b"Delegated implementer/reviewer: obey your assigned role, do not recursively launch this workflow. "
+                         b"Pure discussion/research does not trigger it. Preserve existing instructions and authorization.\n" + manage.END + b"\n")
+        originals = {}
+        for i, (_, relative) in enumerate(manage.RUNTIMES.values()):
+            route = self.home / relative
+            route.parent.mkdir(parents=True, exist_ok=True)
+            original = b"User instructions\r\n" if i % 2 else b"User instructions without final newline"
+            route.write_bytes(original)
+            route.chmod(0o640)
+            originals[route] = original
+        _, profile_path = manage.paths(self.home)
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile = manage.read_json(manage.SKILL / "profiles/default.json")
+        profile["runtimes"]["opencode"]["reviewer"] = "provider/preserved-model#variant"
+        profile_bytes = (json.dumps(profile, indent=4) + "\n").encode()
+        profile_path.write_bytes(profile_bytes)
+        profile_path.chmod(0o600)
+        peer = self.home / ".local/state/feature-delivery/peers/retained.json"
+        peer.parent.mkdir(parents=True, exist_ok=True)
+        peer.write_bytes(b'{"reviewer_session":"preserved"}\n')
+        peer_bytes = peer.read_bytes()
+        # Previous generated wrappers are owned by manifest hashes, not current templates.
+        previous_agent = b"---\nmode: subagent\n---\nPrior owned role instructions.\n"
+        with patch.object(manage, "routing", return_value=prior_routing), \
+             patch.object(manage, "agent_content", return_value=previous_agent), \
+             contextlib.redirect_stdout(io.StringIO()):
+            manage.install(self.home, list(manage.RUNTIMES), manage.SKILL / "profiles/default.json", False)
+        agent = self.home / ".config/opencode/agents/feature-delivery-reviewer.md"
+        self.assertEqual(agent.read_bytes(), previous_agent)
+        self.assertEqual(self.cli("install")["result"], "already installed")
+        self.assertEqual(agent.read_bytes(), previous_agent)
+        for route in originals:
+            self.assertIn(prior_routing, route.read_bytes())
+        # User additions outside managed bytes must survive both operations.
+        outside = b"User-added prefix\n"
+        first = next(iter(originals))
+        first.write_bytes(outside + first.read_bytes())
+        self.cli("uninstall", "--dry-run")
+        self.assertEqual(agent.read_bytes(), previous_agent)
+        self.cli("uninstall")
+        for route, original in originals.items():
+            self.assertEqual(route.read_bytes(), (outside if route == first else b"") + original)
+            self.assertEqual(route.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(profile_path.read_bytes(), profile_bytes)
+        self.assertEqual(peer.read_bytes(), peer_bytes)
+        self.cli("install")
+        self.assertTrue(self.cli("verify")["ok"])
+        for route, original in originals.items():
+            self.assertEqual(route.read_bytes().count(manage.BEGIN), 1)
+            self.assertEqual(route.read_bytes().count(manage.END), 1)
+            self.assertIn(manage.routing(), route.read_bytes())
+            self.assertNotIn(prior_routing, route.read_bytes())
+            self.assertTrue(route.read_bytes().startswith((outside if route == first else b"") + original))
+            self.assertEqual(route.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(agent.read_bytes(), manage.agent_content("reviewer", profile))
+        self.assertIn(b'provider/preserved-model#variant', agent.read_bytes())
+        self.assertEqual(profile_path.read_bytes(), profile_bytes)
+        self.assertEqual(profile_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(peer.read_bytes(), peer_bytes)
+        self.cli("uninstall")
+        for route, original in originals.items():
+            self.assertEqual(route.read_bytes(), (outside if route == first else b"") + original)
+
+    def test_reinstall_snapshot_preserves_initial_unchanged_custom_profile(self):
+        profile = manage.read_json(manage.SKILL / "profiles/default.json")
+        profile["runtimes"]["opencode"]["reviewer"] = "provider/initial-custom-model"
+        custom = (json.dumps(profile, indent=4) + "\n").encode()
+        supplied = self.home / "supplied-profile.json"
+        supplied.write_bytes(custom)
+        supplied.chmod(0o600)
+        self.cli("install", "--runtimes", "codex,opencode", "--profile", str(supplied))
+        _, installed = manage.paths(self.home)
+        self.assertEqual(installed.read_bytes(), custom)
+        snapshot = self.home / "private-refresh-profile.json"
+        snapshot.write_bytes(installed.read_bytes())
+        snapshot.chmod(0o600)
+        self.cli("uninstall")
+        self.assertFalse(installed.exists(), "Unedited installer-created profiles are owned")
+        self.cli("install", "--runtimes", "codex,opencode", "--profile", str(snapshot))
+        self.assertEqual(installed.read_bytes(), custom)
+        self.assertEqual(installed.stat().st_mode & 0o777, 0o600)
+        agent = self.home / ".config/opencode/agents/feature-delivery-reviewer.md"
+        self.assertEqual(agent.read_bytes(), manage.agent_content("reviewer", profile))
+        self.assertTrue(self.cli("verify")["ok"])
+        self.assertFalse((self.home / manage.RUNTIMES["pi"][0]).exists())
+        self.assertFalse((self.home / manage.RUNTIMES["claude"][0]).exists())
 
     def test_write_failure_rolls_back(self):
         from unittest.mock import patch
